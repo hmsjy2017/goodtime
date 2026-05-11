@@ -21,27 +21,42 @@ jobs:
       - name: 配置 Gradle 缓存
         uses: gradle/actions/setup-gradle@v3
 
-      - name: 预热 Gradle 环境 (预下载依赖并修复权限)
+      - name: 优化 Gradle 内存并修复权限
         run: |
-          # 确保根目录的 Gradle Wrapper 有可执行权限
           chmod +x ./gradlew
-          # 运行一次基础命令，让系统提前下载好 Gradle 核心包，防止 Xcode 编译时因为网络下载超时而闪退
+          # 给 Gradle 分配更多内存，防止 Kotlin 编译时 OOM 崩溃
+          echo "org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8" >> gradle.properties
           ./gradlew --version
 
-      - name: 编译并构建 iOS App (无签名)
+      - name: 注入 KMP Xcode 环境 (修复 PhaseScriptExecution)
+        run: |
+          # 寻找 iOS 目录
+          if [ -d "iosApp" ]; then
+            cd iosApp
+          elif [ -d "ios" ]; then
+            cd ios
+          else
+            echo "未找到 iOS 工程目录！"
+            exit 1
+          fi
+          
+          # 【核心修复】创建 .xcode.env.local 文件，KMP 编译脚本会自动读取它
+          echo "export JAVA_HOME=\"$JAVA_HOME\"" > .xcode.env.local
+          
+          echo "已成功注入 Java 路径到 Xcode 环境："
+          cat .xcode.env.local
+
+      - name: 编译并构建 iOS App
         run: |
           if [ -d "iosApp" ]; then
             cd iosApp
             PROJECT_NAME="iosApp"
-          elif [ -d "ios" ]; then
+          else
             cd ios
             PROJECT_NAME="ios"
-          else
-            echo "未找到 iOS 工程目录，请检查仓库结构！"
-            exit 1
           fi
           
-          # 执行 Xcode 编译，关键点：在末尾强制传入 JAVA_HOME
+          # 执行 Xcode 编译
           xcodebuild clean build \
             -project ${PROJECT_NAME}.xcodeproj \
             -scheme ${PROJECT_NAME} \
@@ -51,10 +66,9 @@ jobs:
             -derivedDataPath build_output \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            JAVA_HOME="$JAVA_HOME"
+            CODE_SIGN_IDENTITY=""
 
-      - name: 打包为 TrollStore 适用的 IPA
+      - name: 打包为 TrollStore IPA
         run: |
           mkdir -p Payload
           find . -name "*.app" -path "*/build_output/Build/Products/Release-iphoneos/*" -exec cp -r {} Payload/ \;

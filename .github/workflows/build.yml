@@ -1,0 +1,69 @@
+name: Build Goodtime iOS for TrollStore
+
+# 允许在 GitHub Actions 页面手动触发工作流
+on:
+  workflow_dispatch: 
+
+jobs:
+  build-ios:
+    name: Build Unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: 检出代码 (Checkout Repository)
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17 (Setup Java for KMP)
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'zulu'
+
+      - name: 配置 Gradle 缓存 (Cache Gradle)
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: 编译并构建 iOS App (无签名)
+        run: |
+          # 绝大多数 KMP 项目的 iOS 源码位于 iosApp 或 ios 目录下。
+          # 检查并进入 iOS 工程目录
+          if [ -d "iosApp" ]; then
+            cd iosApp
+            PROJECT_NAME="iosApp"
+          elif [ -d "ios" ]; then
+            cd ios
+            PROJECT_NAME="ios"
+          else
+            echo "未找到 iOS 工程目录，请检查仓库结构！"
+            exit 1
+          fi
+          
+          # 执行 Xcode 命令行编译，强制关闭代码签名，并将产物输出到 build_output 目录
+          xcodebuild clean build \
+            -project ${PROJECT_NAME}.xcodeproj \
+            -scheme ${PROJECT_NAME} \
+            -configuration Release \
+            -sdk iphoneos \
+            -arch arm64 \
+            -derivedDataPath build_output \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY=""
+
+      - name: 打包为 TrollStore 适用的 IPA
+        run: |
+          # iOS 应用标准打包结构：新建一个 Payload 文件夹
+          mkdir -p Payload
+          
+          # 寻找编译生成的 .app 文件夹并复制到 Payload 中
+          # find 命令用于自动适配不同的目录名 (iosApp/ios)
+          find . -name "*.app" -path "*/build_output/Build/Products/Release-iphoneos/*" -exec cp -r {} Payload/ \;
+          
+          # 将 Payload 压缩为 .ipa 格式 (-q 静默, -r 递归)
+          zip -qr Goodtime-TrollStore.ipa Payload
+
+      - name: 上传构建产物 (Upload Artifacts)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Goodtime-iOS-IPA
+          path: Goodtime-TrollStore.ipa
+          retention-days: 7
